@@ -1,0 +1,40 @@
+import xarray as xr
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+import sys
+sys.path.append('/Users/kat/Desktop/CW3E/CW3E_Code/AI_model/Interpolation/')
+sys.path.append('/Users/kat/Desktop/CW3E/CW3E_Code/AI_model/Data_Organization/')
+
+from KDTree_Interpolation import InterpolateDatasetNearestNeighbor
+from AI_DataServices import CleanDataAI
+# from AI_DataServices import CleanData
+
+
+## load in dataset
+ds = xr.open_dataset('/Users/kat/Desktop/CW3E/CW3E_Code/Test_Data/AI-2022-02-07T00-subset-epoch79.nc')
+
+## select for South Pole
+lat_min, lat_max = -90, -60
+mask = ((ds.latitude >= lat_min) & (ds.latitude <= lat_max))
+ds_south_pole = ds.sel(values=mask)
+
+## Organize the AI Data
+cleaner = CleanDataAI(ds_south_pole)
+ds_south_pole = cleaner.run()
+ds_south_pole.to_netcdf('/Users/kat/Desktop/CW3E/CW3E_Code/AI_model/CleanData/AI_model.nc')
+
+
+##interpolating all of the variables in an unprocessed way: need to process the tp and create a new variable in data services()
+for var in list(ds_south_pole.data_vars):
+    # since latitude and longitude have only (points,) instead of (points,time)
+    if var not in ["latitude", "longitude"]:
+        print(var)
+        if var != 'tp':        
+            for t in range(len(ds.time)):                
+                interpolator = InterpolateDatasetNearestNeighbor(ds_south_pole, var=var, time=t)
+                interpolator.run()
+        elif var == 'tp':
+            for t in range(len(ds.time)-1):
+                interpolator = InterpolateDatasetNearestNeighbor(ds_south_pole, var=var, time= t+1)
+                interpolator.run()
