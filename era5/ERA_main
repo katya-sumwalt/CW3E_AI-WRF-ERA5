@@ -1,0 +1,21 @@
+import xarray as xr
+import os 
+from pathlib import Path
+import numpy as np
+from ERA5_DataServices import CreateDataset
+from ERA5_PlottingServices import PlotERA5
+
+
+files_path = Path('/Users/kat/Desktop/CW3E/CW3E_Code/ERA_Data/Data/RawData/')
+create_ds = CreateDataset(files_path)
+ds  = create_ds.run()
+ds.to_netcdf('/Users/kat/Desktop/CW3E/CW3E_Code/ERA_Data/Data/CleanData/ERA5.nc')
+# print(ds) ## returns dataset containing all of the variables
+selected_vars = ['z_500_ERA5','tp_ERA5', 'IWV_ERA5','IVT_Scalar_ERA5','t2m_ERA5']
+color_bars = ['BrBG','jet', 'jet','inferno_r','RdBu_r']
+
+for i,var in enumerate(selected_vars):
+    colorbar = color_bars[i]
+    output_dir = f"/Users/kat/Desktop/CW3E/Visuals/ERA5_Plots/{var}"
+    ERAplot = PlotERA5(output_dir, ds, var, colorbar)  # pass full dataset here
+    ERAplot.run()
