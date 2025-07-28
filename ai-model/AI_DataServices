@@ -1,0 +1,15 @@
+import numpy as np 
+import xarray as xr
+
+class CleanDataAI():
+    def __init__(self,ds):
+        self.ds = ds
+        self.var_list = list(self.ds.data_vars)
+        
+    def parse_AI(self):
+        self.ds['ivt_scalar'] = np.sqrt(self.ds['ivt_u'] **2 + self.ds['ivt_v']** 2)
+        self.ds['tp'] = self.ds['tp'].sel(time=self.ds['time'][1:])
+    
+    def run(self):
+        self.parse_AI()
+        return self.ds
