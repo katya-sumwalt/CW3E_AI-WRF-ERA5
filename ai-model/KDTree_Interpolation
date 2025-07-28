@@ -1,0 +1,114 @@
+import numpy as np
+from scipy.spatial import cKDTree
+import xarray as xr
+import matplotlib.pyplot as plt
+import os
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+
+class InterpolateDatasetNearestNeighbor():    
+    def __init__(self,ds,var,time):
+        self.ds_at_time = ds[var].isel(time = time)
+        self.var_name = var
+        self.var = self.ds_at_time
+        self.lat = ds['latitude'].values
+        self.lon = ds['longitude'].values
+        self.time = time
+        self.vmin = float(ds[var].min().item())
+        self.vmax = float(ds[var].max().item())
+        
+    def create_grid(self):
+        lat_era5 = np.arange(-90, -60.25, 0.25)
+        lon_era5 = np.arange(-180, 180, 0.25)
+        LON_ERA5, LAT_ERA5 = np.meshgrid(lon_era5, lat_era5)
+        ERA5_grid_points = np.column_stack([LAT_ERA5.ravel(), LON_ERA5.ravel()])
+        self.grid_ERA5 = ERA5_grid_points
+        self.LAT_ERA5 = LAT_ERA5
+        self.LON_ERA5 = LON_ERA5
+        
+    def interpolate(self):        
+        latitude, longitude = self.lat, self.lon
+        # print('yay')
+        tree = cKDTree(np.c_[latitude, longitude])
+        # print(tree)
+        _, idx = tree.query(self.grid_ERA5)
+        # print("self.var.shape:", self.var.shape)
+        # print("var shape at idx:", self.var.values[idx])
+        # print("LAT_ERA5 shape:", self.LAT_ERA5.shape)
+        # var_flat = self.var.values.flatten() #must be 2D lat lon
+        var_interp = self.var.values[idx].reshape(self.LAT_ERA5.shape)
+        self.var_interp = var_interp
+        # print(self.var_interp)
+        
+    def scatter_plot_nomap(self):
+        fig,ax = plt.subplots(2,1, figsize=(15, 10))
+        vmin = np.nanmin([self.var_interp.min(), self.ds_at_time.min()])
+        vmax = np.nanmax([self.var_interp.max(), self.ds_at_time.max()])
+        img = ax[0].scatter(self.LON_ERA5, self.LAT_ERA5, c=self.var_interp, cmap='viridis', s=1, vmin = vmin, vmax = vmax)
+        cbar = plt.colorbar(img, ax=ax[0])
+        cbar.set_label('Interpolated IWV')
+        ax[0].set_xlabel('Longitude')
+        ax[0].set_ylabel('Latitude')
+        ax[0].set_title(f'Map of {self.var_name}')
+        img2 = ax[1].scatter(self.lon, self.lat, c=self.ds_at_time, cmap='viridis', vmin = vmin, vmax = vmax)
+        cbar = plt.colorbar(img2, ax=ax[1])
+        cbar.set_label('Original IWV')
+        ax[1].set_xlabel('Longitude')
+        ax[1].set_ylabel('Latitude')
+        ax[1].set_title(f'Scatter Map of Original {self.var_name}')
+        ##create a directory to save it in better
+        path = f"/Users/kat/Desktop/CW3E/Visuals/AI_Plots/{self.var_name}/{self.time}.png"
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
+        plt.savefig(path)
+        plt.close()
+    
+    def scatter_plot(self):
+        proj = ccrs.SouthPolarStereo()
+        fig, ax = plt.subplots(1, 2, figsize=(20, 10), subplot_kw={'projection': proj})
+        vmin = self.vmin
+        vmax = self.vmax
+        # First scatter plot: interpolated data
+        img = ax[0].scatter(self.LON_ERA5, self.LAT_ERA5,c=self.var_interp,cmap='viridis', s=5,vmin=vmin, vmax=vmax,transform=ccrs.PlateCarree()
+        )
+        cbar = plt.colorbar(img, ax=ax[0], orientation='vertical', pad=0.05)
+        cbar.set_label(f'Interpolated {self.var_name}')
+        ax[0].set_title(f'Map of {self.var_name}')
+        ax[0].coastlines()
+        ax[0].set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
+
+        # Second scatter plot: original data
+        img2 = ax[1].scatter(
+            self.lon, self.lat,
+            c=self.ds_at_time,
+            cmap='viridis',
+            s=5,
+            vmin=vmin, vmax=vmax,
+            transform=ccrs.PlateCarree()
+        )
+        cbar2 = plt.colorbar(img2, ax=ax[1], orientation='vertical', pad=0.05)
+        cbar2.set_label(f'Original {self.var_name}')
+        ax[1].set_title(f'Scatter Map of Original {self.var_name}')
+        ax[1].coastlines()
+        ax[1].set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
+        plt.tight_layout()
+
+        # Create directory and save figure
+        path = f"/Users/kat/Desktop/CW3E/Visuals/AI_Plots2/{self.var_name}/{self.time}.png"
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
+        plt.savefig(path, bbox_inches='tight')
+        plt.close()
+        
+        
+    def run(self):
+        self.create_grid()
+        self.interpolate()
+        self.scatter_plot_nomap()
+        self.scatter_plot()
+    
+    def run_interpolation(self):
+        self.create_grid()
+        self.interpolate()
+        return self
