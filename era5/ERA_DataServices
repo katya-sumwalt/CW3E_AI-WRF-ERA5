@@ -1,0 +1,29 @@
+import xarray as xr
+import os 
+from pathlib import Path
+import numpy as np
+
+class CreateDataset:
+    def __init__(self, files_path):
+        list_files = [f for f in files_path.iterdir() if f.name.endswith('.nc')]
+        ds_all = xr.open_mfdataset(list_files, combine='by_coords')
+
+        # Create each new variable with resampled time
+        z_500 = (ds_all["z"] / 9.80665).resample(valid_time='6h').mean()
+        ## cou
+        IVT_Scalar = np.sqrt(ds_all['viwvn']**2 + ds_all['viwve']**2).resample(valid_time='6h').mean()
+        IWV = ds_all['tcwv'].resample(valid_time='6h').mean()
+        tp = ds_all['tp'].resample(valid_time='6h').sum() * 1000
+        t2m = (ds_all['t2m'] - 273.15).resample(valid_time='6h').mean()
+
+        # Create new dataset with only the processed variables
+        self.ds = xr.Dataset({
+            'z_500_ERA5': z_500,
+            'IVT_Scalar_ERA5': IVT_Scalar,
+            'IWV_ERA5': IWV,
+            'tp_ERA5': tp,
+            't2m_ERA5': t2m
+        })
+        
+    def run(self):
+        return self.ds
