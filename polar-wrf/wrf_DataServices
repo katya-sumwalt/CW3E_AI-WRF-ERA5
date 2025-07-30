@@ -1,209 +1,112 @@
-import matplotlib.pyplot as plt
 import xarray as xr
-from matplotlib import animation
+import matplotlib.pyplot as plt
 import numpy as np
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 import os
-import subprocess
-import pandas as pd
-from sklearn.metrics import mean_squared_error
-import sys
+from wrf import getvar, interplevel
+from netCDF4 import Dataset
+import gc
+import xarray as xr
+import timeit
 
-sys.path.append('/Users/kat/Desktop/CW3E/CW3E_Code/AI_model/Interpolation/')
-sys.path.append('/Users/kat/Desktop/CW3E/CW3E_Code/AI_model/Data_Organization/')
+g = 9.81
 
-from KDTree_Interpolation import InterpolateDatasetNearestNeighbor
-from AI_DataServices import CleanDataAI
+class WrfDataServices():
+    def __init__(self,ds_path,path_out = '/home/k1sumwalt/clean_data/pwrf/2022-02-07/pwrf_all'):
+        self.path = ds_path
+        self.save_path = path_out
+        self.wrf_list = sorted([f for f in os.listdir(ds_path) if f.startswith('wrfout')])
+    def get_vars(self):
+        ds_list = []
+        for file in self.wrf_list[:]:
+            print("Getting Variables from WRF Dataset")
+            wrfin = Dataset(os.path.join(self.path,file))
+            #get necessary variables for processing
+            XLAT = getvar(wrfin, "XLAT")
+            XLONG = getvar(wrfin, "XLONG")
+            T2 = getvar(wrfin, "T2")
+            p = getvar(wrfin,"pressure")
+            ht = getvar(wrfin, "z", units="dm")
+            z_500 = interplevel(ht, p, 500.0)
+            PRECIP1 = getvar(wrfin, "RAINNC")
+            PRECIP2 = getvar(wrfin, "RAINC")
+            QVAP = getvar(wrfin, "QVAPOR")  #Water vapor/air
+            u = getvar(wrfin, "ua")
+            v = getvar(wrfin, "va")
 
+            #Variables to calculate: Total Precip, IVT, IWV(TCWV)
+            Total_Precip = PRECIP1 + PRECIP2
 
-ds_AI = xr.open_dataset('/Users/kat/Desktop/CW3E/CW3E_Code/AI_model/CleanData/AI_model.nc')
-ds_ERA5 = xr.open_dataset('/Users/kat/Desktop/CW3E/CW3E_Code/ERA_Data/Data/CleanData/ERA5.nc')
-ds_ERA5 = ds_ERA5.sel(valid_time=ds_AI['time'])
-ds_AI['2t'] = ds_AI['2t'] - 273.15
+            #IWV = water vapor integrated over all pressure levels 
+            #IWV = Integral over pressure levels of specific humidiaty as a function of pressure 
+            #pressure level defined by difference between pressure levels
+            dp = p[:-1,:,:] - p[1:,:,:]
+            q_layer = 0.5 * (QVAP[:-1, :, :] + QVAP[1:, :, :]) #mean specific per layer
+            TCWV = ((1/g) * q_layer * dp).sum(dim = "bottom_top")
 
+            #IVT (Integrated Vapor Transport)
+            #calculate how much total vapor is moving at each layer
+            u_layer = 0.5 * (u[:-1, :, :] + u[1:, :, :]) #average to approx the wind at each layer
+            v_layer = 0.5 * (v[:-1, :, :] + v[1:, :, :])
+            u_flux = (1/g) * q_layer * dp * u_layer
+            v_flux = (1/g) * q_layer * dp * v_layer #calculate flux at each layer
+            IVT_u = u_flux.sum(dim = "bottom_top")
+            IVT_v = v_flux.sum(dim = "bottom_top")
+            IVT = np.sqrt(IVT_u **2  + IVT_v ** 2)
 
-variables = ['iwv','ivt_scalar','2t','tp','z_500']
-variables_ERA5  = ['IWV_ERA5', 'IVT_Scalar_ERA5','t2m_ERA5','tp_ERA5','z_500_ERA5']
-## note could create an algorithm that weighs each of the components according to inverse distance as well as how different the point is relatively
-color_bars = ['jet','inferno_r','RdBu_r','jet','BrBG']
+            #save the variables
+            IVT = IVT.assign_coords(XLAT = XLAT, XLONG = XLONG)
+            IWV = TCWV.assign_coords(XLAT = XLAT, XLONG = XLONG)
+            T2 = T2.assign_coords(XLAT = XLAT, XLONG = XLONG)
+            Z_500 = z_500.assign_coords(XLAT = XLAT, XLONG = XLONG)
+            TP = Total_Precip.assign_coords(XLAT = XLAT, XLONG = XLONG)
+            T2.name = "T2"
+            Z_500.name = "Z_500"
+            TP.name = "TP"
+            IWV.name = "IWV"
+            IVT.name = "IVT"
 
+            #save as a dataset
+            ds_out = xr.Dataset({
+                "IWV" : IWV,
+                "IVT" : IVT,
+                "T2": T2,
+                "TP": TP,
+                "Z_500":Z_500})
 
-for i, var in enumerate(variables):
-    if var != 'tp':
-        for t in range(len(ds_AI.time)):
-            print(var)
-            eravar = variables_ERA5[i]
-            colorbar = color_bars[i]
-            
-            # Interpolate AI data (scatter points)
-            interp_ds = InterpolateDatasetNearestNeighbor(ds_AI, var=var, time=t)
-            interp_ds = interp_ds.run_interpolation()
-            era5_data = ds_ERA5[eravar].isel(time=t)
-            
-        
-            ## Calculate the RMSE GLOBAL
-            MSE = mean_squared_error(interp_ds.var_interp,era5_data[1:-1])
-            RMSE = np.sqrt(MSE)
-            print(f'The RMSE is:{RMSE}')
-            
-            ## GLOBAL BIAS
-            BIAS = np.mean(np.array(interp_ds.var_interp[:]) - np.array(era5_data[1:-1]))
-            print(f'The Bias is: {BIAS}')
-            
-            ## GLOBAL CORRELATION
-            CORRELATION = np.corrcoef(np.array(interp_ds.var_interp[:]) - np.array(era5_data[1:-1]))[0, 1]
-            print(f'The Correlation is: {CORRELATION}')
-                    
-            
-            # Plot settings
-            proj = ccrs.SouthPolarStereo()
-            fig, ax = plt.subplots(1, 2, figsize=(20, 10), subplot_kw={'projection': proj})
-            if var != '2t':
-                vmin = interp_ds.vmin
-                vmax = interp_ds.vmax
-            else: 
-                vmin = interp_ds.vmin
-                vmax = - 1 * interp_ds.vmin
-            
-            # Left plot: AI interpolated data (scatter)
-            img = ax[0].scatter(
-                interp_ds.LON_ERA5, 
-                interp_ds.LAT_ERA5,
-                c=interp_ds.var_interp,
-                cmap=colorbar,
-                s=5,
-                vmin=vmin,
-                vmax=vmax,
-                transform=ccrs.PlateCarree()
-            )
-            ax[0].set_title(f'AI Interpolated: {var} at time : {ds_AI['time'][t].values}')
-            ax[0].coastlines()
-            ax[0].set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
-            
-            # Right plot: ERA5 data (pcolormesh for grid)
-        
-            img2 = ax[1].pcolormesh(
-                ds_ERA5['longitude'],  # 1D lon
-                ds_ERA5['latitude'],    # 1D lat
-                era5_data,              # 2D data
-                cmap=colorbar,
-                vmin=vmin,
-                vmax=vmax,
-                transform=ccrs.PlateCarree()
-            )
-            ax[1].set_title(f'ERA5: {eravar} at time {ds_ERA5['valid_time'][t].values}')
-            ax[1].coastlines()
-            ax[1].set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
-            
-            # Add colorbars
-            plt.colorbar(img, ax=ax[0], label=f'Interpolated {var}')
-            plt.colorbar(img2, ax=ax[1], label=f'ERA5 {eravar}')
-            metrics_text = f"RMSE = {RMSE:.2f}\nBIAS = {BIAS:.2f}\nCORR = {CORRELATION:.2f}"
+            ds_list.append(ds_out)
+            del wrfin
+            gc.collect()
 
-    # Add a textbox in the top-right corner
-            plt.text(
-                0.98, 0.98, metrics_text,
-                transform=plt.gca().transAxes,  # position in axes fraction
-                ha='right', va='top',           # align to top-right
-                fontsize=12,
-                bbox=dict(facecolor='white', alpha=0.8, edgecolor='black')  # textbox style
-            )
-            plt.tight_layout()
-            
-            save_dir =f'/Users/kat/Desktop/CW3E/Visuals/AI_ERA5/{var}'
-            if not os.path.exists(save_dir):
-                os.mkdir(save_dir)
-        
-            plt.savefig(f'/Users/kat/Desktop/CW3E/Visuals/AI_ERA5/{var}/image_{t}.png')
-            plt.close()
-    else:
-        for t in range(len(ds_AI.time) - 1):
-            t = t + 1 
-            print(var)
-            eravar = variables_ERA5[i]
-            colorbar = color_bars[i]
-            
-            # Interpolate AI data (scatter points)
-            interp_ds = InterpolateDatasetNearestNeighbor(ds_AI, var=var, time=t)
-            interp_ds = interp_ds.run_interpolation()
-            era5_data = ds_ERA5[eravar].isel(time=t)
-            
-        
-            ## Calculate the RMSE GLOBAL
-            MSE = mean_squared_error(interp_ds.var_interp,era5_data[1:-1])
-            RMSE = np.sqrt(MSE)
-            print(f'The RMSE is:{RMSE}')
-            
-            ## GLOBAL BIAS
-            BIAS = np.mean(np.array(interp_ds.var_interp[:]) - np.array(era5_data[1:-1]))
-            print(f'The Bias is: {BIAS}')
-            
-            ## GLOBAL CORRELATION
-            CORRELATION = np.corrcoef(np.array(interp_ds.var_interp[:]) - np.array(era5_data[1:-1]))[0, 1]
-            print(f'The Correlation is: {CORRELATION}')
-                    
-            
-            # Plot settings
-            proj = ccrs.SouthPolarStereo()
-            fig, ax = plt.subplots(1, 2, figsize=(20, 10), subplot_kw={'projection': proj})
-            vmin = interp_ds.vmin
-            vmax = interp_ds.vmax
-            
-            # Left plot: AI interpolated data (scatter)
-            img = ax[0].scatter(
-                interp_ds.LON_ERA5, 
-                interp_ds.LAT_ERA5,
-                c=interp_ds.var_interp,
-                cmap=colorbar,
-                s=5,
-                vmin=vmin,
-                vmax=vmax,
-                transform=ccrs.PlateCarree()
-            )
-            # ax[0].set_title(f'AI Interpolated: {var} at time : {ds_AI['time'][t].values}')
-            ax[0].set_title(f'AI Interpolated: {var}')
-            ax[0].coastlines()
-            ax[0].set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
-            
-            metrics_text = f"RMSE = {RMSE:.2f}\nBIAS = {BIAS:.2f}\nCORR = {CORRELATION:.2f}"
+        ds = xr.concat(ds_list, dim = 'Time')
+        mask = ds['XLAT'] < -30
+        ds = ds.where(mask, drop = True)
+        ds = ds.drop_attrs() #drops the projection 
+        encoding = {var: {'_FillValue': -9999.0, 'zlib': True} for var in ds.data_vars}
+        ds.load()
+        ds.to_netcdf(f'{self.save_path}.nc')
+        print("Hourly Data Set Succesfully Created....")
+        self.output_ds = ds
 
+    def six_hourify(self):
+        list_of_vars = ["T2","TP","IWV","IVT","Z_500"]
+        new_ds_list = []
+        for variable in list_of_vars:
+            if variable != "TP":
+                variable = self.output_ds[variable].resample(Time = '6h').mean()
+            else:
+                variable = self.output_ds[variable].resample(Time = '6h').sum()
 
-            ax[0].text(
-                0.98, 0.98, metrics_text,
-                transform=plt.gca().transAxes,  
-                ha='left', va='top',          
-                fontsize=12,
-                bbox=dict(facecolor='white', alpha=0.8, edgecolor='black')  
-            )
-            plt.tight_layout()
-            
-            # Right plot: ERA5 data (pcolormesh for grid)
-        
-            img2 = ax[1].pcolormesh(
-                ds_ERA5['longitude'],  # 1D lon
-                ds_ERA5['latitude'],    # 1D lat
-                era5_data,              # 2D data
-                cmap=colorbar,
-                vmin=vmin,
-                vmax=vmax,
-                transform=ccrs.PlateCarree()
-            )
-            ax[1].set_title(f'ERA5: {eravar}')
-            ax[1].coastlines()
-            ax[1].set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
-            
-            # Add colorbars
-            plt.colorbar(img, ax=ax[0], label=f'Interpolated {var}')
-            plt.colorbar(img2, ax=ax[1], label=f'ERA5 {eravar}')
-            plt.tight_layout()
-           
-            save_dir =f'/Users/kat/Desktop/CW3E/Visuals/AI_ERA5/{var}'
-            if not os.path.exists(save_dir):
-                os.mkdir(save_dir)
-        
-            plt.savefig(f'/Users/kat/Desktop/CW3E/Visuals/AI_ERA5/{var}/image_{t}.png')
-            plt.close()
+            new_ds_list.append(variable)
+            ds_6H = xr.merge(new_ds_list)
+            ds_6H.to_netcdf(f'{self.save_path}_6H.nc')
+            print("Saved in 6 hourly form...")
+            self.ds_6H = ds_6H
 
-        ## CREATE ANOTHER IMAGE THAT ALSO INCLUDES THE RMSE
-        ## Do the GLOBAL RMSE
+    def spatial_interpolation(self):
+        print("unfinished business in the interpolation")
+
+    def run(self):
+       self.get_vars()
+       self.six_hourify()
+       self.spatial_interpolation()
+
