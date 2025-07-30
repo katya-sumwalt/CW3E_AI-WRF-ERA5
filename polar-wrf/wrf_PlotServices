@@ -3,40 +3,32 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from scipy.spatial import cKDTree
+import os
+import numpy as np
 
-ds_in = '/home/k1sumwalt/clean_data/pwrf/2022-02-07/pwrf_all.nc'
+ds_in = '/home/k1sumwalt/clean_data/pwrf/2022-02-07/pwrf_all_6H.nc'
 ds = xr.open_dataset(ds_in)
 ds = ds.where(ds['XLAT']<-60, drop = True)
-
-
-def create_grid(self):
-    lat_era5 = np.arange(-90, -60.25, 0.25)
-    lon_era5 = np.arange(-180, 180, 0.25)
-    LON_ERA5, LAT_ERA5 = np.meshgrid(lon_era5, lat_era5)
-    ERA5_grid_points = np.column_stack([LAT_ERA5.ravel(), LON_ERA5.ravel()])
-    return ERA5_grid_points
-
-
+print(ds['Time'].values)
 # Extract 2D lat/lon and temperature
 lats = ds['XLAT'].values
 lons = ds['XLONG'].values
-T2 = ds['T2'].isel(Time=0).values - 273.15  # Convert to Celsius if desired
 
-
-# Plot using Cartopy
-fig, ax = plt.subplots(figsize=(8, 8),
-                       subplot_kw={'projection': ccrs.SouthPolarStereo()})
-
-# Add coastlines and grid
-ax.coastlines()
-ax.set_extent([-180, 180, -90, -60], crs=ccrs.PlateCarree())
-ax.gridlines(draw_labels=True)
-
-# Plot data with correct projection
-cf = ax.pcolormesh(lons, lats, T2,
-                   transform=ccrs.PlateCarree(),
-                   cmap='coolwarm')
-
-plt.colorbar(cf, ax=ax, orientation='horizontal', label='2m Temp (°C)')
-plt.title('2m Temperature at Time=0')
-plt.savefig("T2_PolarProjection.png", dpi=150)
+vars = ['T2','Z_500','TP','IWV','IVT']
+for var in vars:
+    path_to_save = f'/home/k1sumwalt/visuals/PWRF_Plots/{var}'
+    os.makedirs(path_to_save, exist_ok=True)
+    print(path_to_save)
+    for time in range(len(ds['Time'])):
+        timestamp = ds['Time'].isel(Time=time).values
+        timestamp_str = np.datetime_as_string(timestamp, unit='h')
+        fig, ax = plt.subplots(figsize = (8,8), subplot_kw = {'projection':ccrs.SouthPolarStereo()})
+        var_to_plot = ds[var].isel(Time = time).values
+        ax.coastlines()
+        ax.set_extent([-180,180,-90,-60],crs = ccrs.PlateCarree())
+        ax.gridlines(draw_labels = True)
+        cf = ax.pcolormesh(lons,lats,var_to_plot,transform = ccrs.PlateCarree(),cmap = 'coolwarm')
+        plt.colorbar(cf,ax = ax, orientation = 'horizontal', label = '2m Temp')
+        plt.title(f"{var} at {timestamp_str}", fontsize=12)
+        plt.savefig(f'{path_to_save}/{var}_{time}.png')
+        plt.close()
